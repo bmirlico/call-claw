@@ -19,7 +19,7 @@ MOCK_RESPONSES: dict[str, str] = {
         "assigned to backend team, priority: high. Ticket ID: CC-247."
     ),
     "create_doc": (
-        "Google Doc created: 'CallClaw Meeting Notes'. "
+        "Notion page created: 'CallClaw Meeting Notes'. "
         "Includes all decisions made and action items from today's call. "
         "Link shared in the chat."
     ),
@@ -61,9 +61,17 @@ async def execute(action_type: str, instruction: str) -> str:
             {
                 "role": "system",
                 "content": (
-                    "You are an action executor inside a meeting assistant. "
-                    "Execute the requested action precisely and return a concise result "
-                    "in 1-3 sentences. Be factual and direct."
+                    "You are an action executor inside a meeting assistant called CallClaw. "
+                    "You have access to these skills: Linear (create tickets via linear-issues skill), "
+                    "Notion (create pages via notion skill — API key is in ~/.config/notion/api_key, "
+                    "always search for existing pages first with the Notion search API, then create child pages under the 'CallClaw' parent page), "
+                    "Gmail (send emails via gmail skill with MATON_API_KEY env var), "
+                    "and web search. "
+                    "IMPORTANT: Always make real API calls. Never simulate or pretend to execute actions. "
+                    "Read the relevant SKILL.md files for API details. "
+                    "Execute the requested action precisely and return a concise result in 1-3 sentences. "
+                    "ALWAYS include the full URL of any created resource (ticket, page, doc) in your response. "
+                    "Be factual and direct."
                 ),
             },
             {"role": "user", "content": instruction},
@@ -72,7 +80,7 @@ async def execute(action_type: str, instruction: str) -> str:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=25) as client:
+        async with httpx.AsyncClient(timeout=45) as client:
             response = await client.post(
                 f"{settings.openclaw_gateway_url}/v1/chat/completions",
                 headers=headers,

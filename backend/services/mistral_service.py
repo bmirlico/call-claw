@@ -27,14 +27,22 @@ Activation rules:
 
 action_type values:
 - web_search    → find info, pricing, comparisons online
-- create_ticket → create issue in Linear or Jira
-- create_doc    → create or edit a Google Doc
-- send_email    → draft or send an email
+- create_ticket → create issue in Linear
+- create_doc    → create a Notion page
+- send_email    → send an email via Gmail
 - recall_memory → user asks about past decisions or past calls
 - generic       → any other browser/computer action
 
-raw_instruction must be a complete natural language instruction with all context
-needed to execute independently — include the request AND the conversational context.
+raw_instruction must be a complete, self-contained instruction. Follow these templates:
+
+- web_search: "Search the web for [specific query]. Return a concise answer with source URLs."
+- create_ticket: "Create a Linear ticket with title '[title]', description '[details from conversation]', priority [1=urgent,2=high,3=normal,4=low]. Include the ticket URL in your response."
+- create_doc: "Search Notion for the 'CallClaw' parent page, then create a child page under it titled '[title]'. Content should include: [summarize the key decisions, action items, and context from the conversation]. Include the page URL in your response."
+- send_email: "Send an email to [email address] with subject '[subject]'. Body: [compose a professional summary of what was discussed/decided]. Confirm when sent."
+- recall_memory: (no instruction needed, handled locally)
+- generic: "[full instruction with context]"
+
+IMPORTANT: Always include enough conversational context in raw_instruction so the executor can act without seeing the transcript.
 """
 
 RESPONSE_SYSTEM = """

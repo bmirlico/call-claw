@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # Recall.ai
     recall_api_key: str = "TODO_fill_this"
-    recall_region: str = "us-west-2"
+    recall_region: str = "eu-central-1"
 
     # Mistral
     mistral_api_key: str = "TODO_fill_this"
@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     default_team_id: str = "team_demo"
 
     class Config:
-        env_file = ".env"
+        env_file = "../.env"
 
 
 settings = Settings()

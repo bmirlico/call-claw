@@ -1,5 +1,8 @@
+import re
 import redis
 import json
+import asyncio
+from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -19,6 +22,18 @@ app.add_middleware(
 )
 
 r = redis.from_url(settings.redis_url)
+
+# Pre-cached confirmation audio (populated at startup)
+CONFIRMATION_CACHE: dict[str, str] = {}
+
+CONFIRMATIONS = {
+    "web_search": "OK, let me look that up.",
+    "create_ticket": "Sure, creating the ticket.",
+    "create_doc": "Got it, preparing the document.",
+    "send_email": "On it, drafting the email.",
+    "recall_memory": "Let me check my notes.",
+    "generic": "OK, on it.",
+}
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -47,6 +62,79 @@ class SeedMemoryRequest(BaseModel):
     key_context: str
 
 
+# ── Background action execution ───────────────────────────────────────────────
+
+async def _execute_action_background(
+    action_id: str,
+    bot_id: str,
+    action_type: str,
+    instruction: str,
+    team_id: str,
+    team_memory: str,
+) -> None:
+    """
+    Runs in background after /process returns the instant confirmation.
+    Executes the action, generates response audio, stores result in Redis,
+    and sends a chat message to the Meet.
+    """
+    try:
+        # Execute action
+        if action_type == "recall_memory":
+            result = team_memory or "I don't have memory of past calls yet."
+        else:
+            result = await openclaw_service.execute(action_type, instruction)
+
+        # Mistral formulates a natural vocal response
+        response_text = await mistral_service.formulate_response(
+            instruction, result, team_memory
+        )
+
+        # Generate response audio
+        audio = elevenlabs_service.generate_audio_base64(response_text)
+
+        # Store result in Redis (TTL 5 min)
+        r.setex(
+            f"action:{action_id}",
+            300,
+            json.dumps({
+                "ready": True,
+                "audio_b64": audio,
+                "response_text": response_text,
+                "action_type": action_type,
+            }),
+        )
+
+        # Inject response into buffer so follow-up questions have full context
+        buffer_manager.add_segment(bot_id, "CallClaw", response_text)
+
+        print(f"[ACTION] Result ready: {action_id} | {response_text[:80]}")
+
+        # Send URLs to Meet chat (only if the result contains links)
+        urls = re.findall(r'https?://[^\s<>"\')\]]+', result)
+        if urls:
+            real_bot_id = r.get(f"team:active_bot:{team_id}")
+            if real_bot_id:
+                chat_text = "\n".join(urls[:3])
+                await recall_service.send_chat_message(
+                    real_bot_id.decode(), chat_text
+                )
+
+    except Exception as e:
+        print(f"[ACTION] Background error: {e}")
+        # Store error result so frontend stops polling
+        r.setex(
+            f"action:{action_id}",
+            300,
+            json.dumps({
+                "ready": True,
+                "audio_b64": CONFIRMATION_CACHE.get("generic", ""),
+                "response_text": "Sorry, something went wrong.",
+                "action_type": action_type,
+            }),
+        )
+    # No post-action cooldown — frontend 8s lockout + Mistral routing handle it
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -69,6 +157,9 @@ async def join_call(request: JoinCallRequest) -> dict:
             7200,
             json.dumps({"meeting_url": request.meeting_url, "team_id": request.team_id}),
         )
+
+        # Store mapping for chat messages (frontend doesn't know the real bot_id)
+        r.setex(f"team:active_bot:{request.team_id}", 7200, bot_id)
 
         team_memory = memory_service.get_team_memory(request.team_id)
 
@@ -102,8 +193,6 @@ async def end_call(request: EndCallRequest) -> dict:
     3. Saves summary to Redis memory (persists for next call)
     4. Removes bot from Meet
     5. Cleans up Redis keys
-
-    ALWAYS call this at the end of a call — it's what builds memory.
     """
     bot_id = request.bot_id
     team_id = request.team_id
@@ -113,7 +202,8 @@ async def end_call(request: EndCallRequest) -> dict:
 
     await recall_service.remove_bot(bot_id)
 
-    for key in [f"bot:active:{bot_id}", f"buffer:{bot_id}", f"cooldown:{bot_id}"]:
+    for key in [f"bot:active:{bot_id}", f"buffer:{bot_id}", f"cooldown:{bot_id}",
+                f"team:active_bot:{team_id}"]:
         r.delete(key)
 
     return {
@@ -126,45 +216,34 @@ async def end_call(request: EndCallRequest) -> dict:
 @app.post("/process")
 async def process_transcript(request: ProcessRequest) -> dict:
     """
-    Main endpoint — called by the bot's React webpage on every transcript segment.
-
-    Flow:
-    1. Add segment to 2-min rolling buffer
-    2. Check cooldown (atomic SETNX dedup lock)
-    3. Ask Mistral: should we act? (uses buffer + team memory as context)
-    4. If yes: execute action via OpenClaw
-    5. Generate vocal response via Mistral + ElevenLabs (single combined audio)
-    6. Refresh cooldown to 45s to absorb bot's own transcribed voice
-    7. Return audio + text to the React frontend
+    Two-phase endpoint:
+    Phase 1 (this response, ~1s): Mistral routing → return cached confirmation audio
+    Phase 2 (background task): OpenClaw → Mistral response → ElevenLabs → Redis
 
     Returns:
-    - { "action": false } — nothing to do
-    - { "action": true, "audio_b64": "...", "response_text": "...", "action_type": "..." }
+    - { "action": false }
+    - { "action": true, "confirmation_audio_b64": "...", "action_id": "...", "action_type": "..." }
     """
     bot_id = request.bot_id
     team_id = request.team_id
     speaker = request.speaker
     text = request.text.strip()
 
-    # Skip very short segments (noise, filler words)
     if len(text.split()) < 3:
         return {"action": False}
 
     buffer_manager.add_segment(bot_id, speaker, text)
 
-    # Atomic cooldown — SETNX ensures only one request proceeds
     cooldown_key = f"cooldown:{bot_id}"
-    if not r.set(cooldown_key, "1", nx=True, ex=30):
+    if not r.set(cooldown_key, "1", nx=True, ex=10):
         return {"action": False}
 
     buffer = buffer_manager.get_buffer(bot_id)
     team_memory = memory_service.get_team_memory(team_id)
 
-    # Mistral routing decision
     decision = await mistral_service.should_act(bot_id, buffer, team_memory)
 
     if not decision.get("should_act") or decision.get("confidence", 0) < 0.85:
-        # Release lock early if no action needed
         r.delete(cooldown_key)
         return {"action": False}
 
@@ -176,32 +255,36 @@ async def process_transcript(request: ProcessRequest) -> dict:
         f"\n         instruction={instruction[:100]}"
     )
 
-    # Execute action — memory recall uses stored context, others go to OpenClaw
-    if action_type == "recall_memory":
-        result = team_memory or "I don't have memory of past calls yet."
-    else:
-        result = await openclaw_service.execute(action_type, instruction)
+    # Generate action_id and launch background task
+    action_id = str(uuid4())[:8]
 
-    # Mistral formulates a natural vocal response from the raw result
-    response_text = await mistral_service.formulate_response(
-        instruction, result, team_memory
+    asyncio.create_task(
+        _execute_action_background(
+            action_id=action_id,
+            bot_id=bot_id,
+            action_type=action_type,
+            instruction=instruction,
+            team_id=team_id,
+            team_memory=team_memory,
+        )
     )
 
-    # Single ElevenLabs call with confirmation + response combined
-    confirmation_text = _get_confirmation(action_type)
-    full_text = f"{confirmation_text} {response_text}"
-    audio = elevenlabs_service.generate_audio_base64(full_text)
-
-    # Refresh cooldown AFTER processing — 45s absorbs the bot's own voice
-    # being transcribed back by Recall.ai (which has ~5-15s latency)
-    r.set(cooldown_key, "1", ex=45)
-
+    # Return instantly with cached confirmation audio
     return {
         "action": True,
-        "audio_b64": audio,
-        "response_text": response_text,
+        "confirmation_audio_b64": CONFIRMATION_CACHE.get(action_type, CONFIRMATION_CACHE.get("generic", "")),
+        "action_id": action_id,
         "action_type": action_type,
     }
+
+
+@app.get("/action/{action_id}")
+async def get_action_result(action_id: str) -> dict:
+    """Polled by frontend to get the background action result."""
+    data = r.get(f"action:{action_id}")
+    if not data:
+        return {"ready": False}
+    return json.loads(data)
 
 
 @app.get("/memory/{team_id}")
@@ -222,14 +305,6 @@ async def seed_memory(request: SeedMemoryRequest) -> dict:
     """
     Seeds a fake past call into memory.
     Use before the demo to enable Scenario 4 (memory recall).
-
-    Example body:
-    {
-      "team_id": "team_demo",
-      "decisions": ["Switch to HubSpot for CRM"],
-      "action_items": [{"task": "Create migration ticket", "assignee": "backend team", "tool": "Linear"}],
-      "key_context": "Team reviewed CRM options and chose HubSpot Enterprise over Salesforce."
-    }
     """
     record = memory_service.seed_memory(
         team_id=request.team_id,
@@ -240,25 +315,15 @@ async def seed_memory(request: SeedMemoryRequest) -> dict:
     return {"success": True, "record": record}
 
 
-def _get_confirmation(action_type: str) -> str:
-    return {
-        "web_search": "Let me look that up...",
-        "create_ticket": "Creating the ticket...",
-        "create_doc": "Preparing the document...",
-        "send_email": "Drafting the email...",
-        "recall_memory": "Checking my notes from past calls...",
-        "generic": "On it...",
-    }.get(action_type, "On it...")
-
-
 @app.on_event("startup")
 async def warmup() -> None:
-    """Pre-warm ElevenLabs on startup to reduce first-response latency."""
+    """Pre-generate confirmation audio clips for instant responses."""
     try:
-        elevenlabs_service.generate_audio_base64("CallClaw ready.")
-        print("✅ ElevenLabs warmed up")
+        for action_type, text in CONFIRMATIONS.items():
+            CONFIRMATION_CACHE[action_type] = elevenlabs_service.generate_audio_base64(text)
+        print(f"Pre-cached {len(CONFIRMATION_CACHE)} confirmation audio clips")
     except Exception as e:
-        print(f"⚠️  ElevenLabs warmup failed (check API key): {e}")
+        print(f"ElevenLabs warmup failed (check API key): {e}")
 
 
 if __name__ == "__main__":

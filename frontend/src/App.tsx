@@ -6,15 +6,30 @@ import type {
   TranscriptSegment,
   LastAction,
   ProcessResponse,
+  ActionResult,
 } from './types'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL as string
 
-// Recall.ai passes bot_id and team_id as URL params when loading this page
-// in headless Chromium. They won't be present when opening locally in a browser.
 const params = new URLSearchParams(window.location.search)
 const BOT_ID = params.get('bot_id') ?? 'local_test'
 const TEAM_ID = params.get('team_id') ?? 'team_demo'
+
+async function pollActionResult(actionId: string): Promise<ActionResult | null> {
+  const maxAttempts = 30
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((r) => setTimeout(r, 1000))
+    try {
+      const res = await fetch(`${BACKEND_URL}/action/${actionId}`)
+      if (!res.ok) continue
+      const data = (await res.json()) as ActionResult
+      if (data.ready) return data
+    } catch {
+      // retry
+    }
+  }
+  return null
+}
 
 export default function App() {
   const [status, setStatus] = useState<AppStatus>('initializing')
@@ -25,9 +40,6 @@ export default function App() {
   const isSpeakingRef = useRef(false)
   const { init: initAudio, playBase64 } = useAudioPlayer()
 
-  // Debounce: Recall.ai sends incremental transcript updates for the same utterance
-  // ("Hey CallClaw" → "Hey CallClaw, check" → "Hey CallClaw, check the height...")
-  // We accumulate and only process the final version after 1.5s of silence.
   const pendingRef = useRef<{ speaker: string; text: string } | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -50,24 +62,37 @@ export default function App() {
 
         const data = (await res.json()) as ProcessResponse
 
-        if (data.action) {
-          console.log(`[ACTION] ${data.action_type}: ${data.response_text}`)
+        if (data.action && data.action_id) {
+          console.log(`[ACTION] ${data.action_type} — playing confirmation`)
           isSpeakingRef.current = true
           setStatus('speaking')
           setLastAction({
             type: data.action_type ?? 'generic',
-            text: data.response_text ?? '',
+            text: 'Processing...',
             timestamp: Date.now(),
           })
 
-          // Play single combined audio clip (confirmation + response)
-          if (data.audio_b64) {
-            await playBase64(data.audio_b64)
+          // Phase 1: Play cached confirmation immediately
+          if (data.confirmation_audio_b64) {
+            await playBase64(data.confirmation_audio_b64)
           }
 
-          // Hold speaking lock for 8s after audio ends.
-          // Recall.ai transcribes the bot's own voice with ~5-15s latency.
-          // This prevents those garbled segments from triggering a new action.
+          // Phase 2: Poll for the action result
+          const result = await pollActionResult(data.action_id)
+
+          if (result?.audio_b64) {
+            // Update action card with final response
+            setLastAction({
+              type: result.action_type ?? data.action_type ?? 'generic',
+              text: result.response_text ?? '',
+              timestamp: Date.now(),
+            })
+
+            // Play response audio
+            await playBase64(result.audio_b64)
+          }
+
+          // Hold speaking lock to absorb bot's own voice in transcript
           await new Promise((r) => setTimeout(r, 8000))
           isSpeakingRef.current = false
           setStatus('listening')
@@ -83,13 +108,10 @@ export default function App() {
 
   const handleSegment = useCallback(
     (speaker: string, text: string): void => {
-      // Drop all segments while bot is speaking — it hears itself
       if (isSpeakingRef.current) return
 
-      // Always update live transcript display immediately
       setTranscript((prev) => [...prev.slice(-20), { speaker, text }])
 
-      // Debounce: store latest segment, send after 1.5s of silence
       pendingRef.current = { speaker, text }
       if (debounceRef.current) clearTimeout(debounceRef.current)
       debounceRef.current = setTimeout(() => {
@@ -111,7 +133,6 @@ export default function App() {
   useEffect(() => {
     const init = async () => {
       try {
-        // getUserMedia is required — Recall.ai injects the mixed call audio here
         await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
         await initAudio()
         connect()

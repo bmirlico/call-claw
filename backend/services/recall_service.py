@@ -76,3 +76,22 @@ async def remove_bot(bot_id: str) -> bool:
             headers=HEADERS,
         )
         return response.status_code == 204
+
+
+async def send_chat_message(bot_id: str, message: str) -> bool:
+    """Send a text message to the Google Meet chat via Recall.ai."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                f"{BASE_URL}/bot/{bot_id}/send_chat_message",
+                headers=HEADERS,
+                json={"message": message},
+            )
+            if response.status_code == 200:
+                print(f"[CHAT] Sent to Meet: {message[:80]}")
+                return True
+            print(f"[CHAT] Failed ({response.status_code}): {response.text[:100]}")
+            return False
+    except Exception as e:
+        print(f"[CHAT] Error: {e}")
+        return False

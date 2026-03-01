@@ -19,6 +19,13 @@ export interface LastAction {
 
 export interface ProcessResponse {
   action: boolean
+  confirmation_audio_b64?: string
+  action_id?: string
+  action_type?: string
+}
+
+export interface ActionResult {
+  ready: boolean
   audio_b64?: string
   response_text?: string
   action_type?: string

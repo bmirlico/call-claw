@@ -38,10 +38,17 @@ export default function App() {
 
   const isProcessingRef = useRef(false)
   const isSpeakingRef = useRef(false)
+  const transcriptRef = useRef<HTMLDivElement>(null)
   const { init: initAudio, playBase64 } = useAudioPlayer()
 
   const pendingRef = useRef<{ speaker: string; text: string } | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (transcriptRef.current) {
+      transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight
+    }
+  }, [transcript])
 
   const processSegment = useCallback(
     async (speaker: string, text: string): Promise<void> => {
@@ -260,6 +267,7 @@ export default function App() {
 
       {/* Live transcript */}
       <div
+        ref={transcriptRef}
         style={{
           background: '#1e293b',
           borderRadius: '10px',

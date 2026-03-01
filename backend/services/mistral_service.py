@@ -64,6 +64,8 @@ Rules:
 - Briefly confirm what you did, then give the result concisely
 - Match the conversation language exactly (French → respond French, English → English)
 - If referencing past call memory, be specific: mention dates and decisions
+- NEVER include URLs in your response — they will be spoken aloud by text-to-speech
+- Instead of a URL, say "I've shared the link in the chat" or "check the chat for the link"
 - NEVER start with "Of course", "Certainly", "Sure", or "Absolutely"
 - NEVER say "I apologize" or "I'm sorry"
 """

@@ -13,9 +13,11 @@ export function useTranscript({ onSegment, onStatusChange }: UseTranscriptOption
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const connect = useCallback((): void => {
-    // This WebSocket only works inside Recall.ai's headless Chromium.
-    // Connecting from a normal browser will fail — that's expected.
-    // Test by running the full bot flow, not by opening localhost directly.
+    // Prevent duplicate connections (React StrictMode calls effects twice)
+    if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) {
+      return
+    }
+
     try {
       wsRef.current = new WebSocket(RECALL_WS_URL)
 

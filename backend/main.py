@@ -130,16 +130,16 @@ async def process_transcript(request: ProcessRequest) -> dict:
 
     Flow:
     1. Add segment to 2-min rolling buffer
-    2. Check cooldown (5s dedup lock)
+    2. Check cooldown (atomic SETNX dedup lock)
     3. Ask Mistral: should we act? (uses buffer + team memory as context)
-    4. If yes: play confirmation audio immediately
-    5. Execute action via OpenClaw
-    6. Generate vocal response via Mistral + ElevenLabs
-    7. Return both audio base64 strings to the React frontend
+    4. If yes: execute action via OpenClaw
+    5. Generate vocal response via Mistral + ElevenLabs (single combined audio)
+    6. Refresh cooldown to 45s to absorb bot's own transcribed voice
+    7. Return audio + text to the React frontend
 
     Returns:
     - { "action": false } — nothing to do
-    - { "action": true, "confirmation_audio_b64": "...", "response_audio_b64": "..." }
+    - { "action": true, "audio_b64": "...", "response_text": "...", "action_type": "..." }
     """
     bot_id = request.bot_id
     team_id = request.team_id
@@ -152,10 +152,9 @@ async def process_transcript(request: ProcessRequest) -> dict:
 
     buffer_manager.add_segment(bot_id, speaker, text)
 
-    # Cooldown check — prevents double-trigger when multiple segments
-    # arrive rapidly from the same utterance
+    # Atomic cooldown — SETNX ensures only one request proceeds
     cooldown_key = f"cooldown:{bot_id}"
-    if r.get(cooldown_key):
+    if not r.set(cooldown_key, "1", nx=True, ex=30):
         return {"action": False}
 
     buffer = buffer_manager.get_buffer(bot_id)
@@ -165,10 +164,9 @@ async def process_transcript(request: ProcessRequest) -> dict:
     decision = await mistral_service.should_act(bot_id, buffer, team_memory)
 
     if not decision.get("should_act") or decision.get("confidence", 0) < 0.85:
+        # Release lock early if no action needed
+        r.delete(cooldown_key)
         return {"action": False}
-
-    # Lock immediately to prevent concurrent processing
-    r.setex(cooldown_key, 5, "1")
 
     action_type = decision.get("action_type", "generic")
     instruction = decision.get("raw_instruction", "")
@@ -177,10 +175,6 @@ async def process_transcript(request: ProcessRequest) -> dict:
         f"[ACTION] type={action_type} | trigger='{decision.get('trigger_phrase', '')}'"
         f"\n         instruction={instruction[:100]}"
     )
-
-    # Generate confirmation audio immediately (while action is executing)
-    confirmation_text = _get_confirmation(action_type)
-    confirmation_audio = elevenlabs_service.generate_audio_base64(confirmation_text)
 
     # Execute action — memory recall uses stored context, others go to OpenClaw
     if action_type == "recall_memory":
@@ -192,12 +186,19 @@ async def process_transcript(request: ProcessRequest) -> dict:
     response_text = await mistral_service.formulate_response(
         instruction, result, team_memory
     )
-    response_audio = elevenlabs_service.generate_audio_base64(response_text)
+
+    # Single ElevenLabs call with confirmation + response combined
+    confirmation_text = _get_confirmation(action_type)
+    full_text = f"{confirmation_text} {response_text}"
+    audio = elevenlabs_service.generate_audio_base64(full_text)
+
+    # Refresh cooldown AFTER processing — 45s absorbs the bot's own voice
+    # being transcribed back by Recall.ai (which has ~5-15s latency)
+    r.set(cooldown_key, "1", ex=45)
 
     return {
         "action": True,
-        "confirmation_audio_b64": confirmation_audio,
-        "response_audio_b64": response_audio,
+        "audio_b64": audio,
         "response_text": response_text,
         "action_type": action_type,
     }

@@ -29,7 +29,7 @@ async def create_bot(meeting_url: str, team_id: str) -> dict:
             headers=HEADERS,
             json={
                 "meeting_url": meeting_url,
-                "bot_name": "CallClaw 🤖",
+                "bot_name": "CallClaw",
                 "output_media": {
                     "camera": {
                         "kind": "webpage",
@@ -39,6 +39,16 @@ async def create_bot(meeting_url: str, team_id: str) -> dict:
                             "url": f"{settings.frontend_url}?team_id={team_id}"
                         },
                     }
+                },
+                "recording_config": {
+                    "transcript": {"provider": {"meeting_captions": {}}},
+                    "realtime_endpoints": [
+                        {
+                            "type": "websocket",
+                            "url": "wss://meeting-data.bot.recall.ai/api/v1/transcript",
+                            "events": ["transcript.data"],
+                        }
+                    ],
                 },
             },
         )

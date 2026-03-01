@@ -22,15 +22,18 @@ export default function App() {
   const [lastAction, setLastAction] = useState<LastAction | null>(null)
 
   const isProcessingRef = useRef(false)
+  const isSpeakingRef = useRef(false)
   const { init: initAudio, playBase64 } = useAudioPlayer()
 
-  const handleSegment = useCallback(
-    async (speaker: string, text: string): Promise<void> => {
-      // Update live transcript display
-      setTranscript((prev) => [...prev.slice(-20), { speaker, text }])
+  // Debounce: Recall.ai sends incremental transcript updates for the same utterance
+  // ("Hey CallClaw" → "Hey CallClaw, check" → "Hey CallClaw, check the height...")
+  // We accumulate and only process the final version after 1.5s of silence.
+  const pendingRef = useRef<{ speaker: string; text: string } | null>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-      // Prevent concurrent processing of multiple segments
-      if (isProcessingRef.current) return
+  const processSegment = useCallback(
+    async (speaker: string, text: string): Promise<void> => {
+      if (isProcessingRef.current || isSpeakingRef.current) return
       isProcessingRef.current = true
 
       try {
@@ -49,6 +52,7 @@ export default function App() {
 
         if (data.action) {
           console.log(`[ACTION] ${data.action_type}: ${data.response_text}`)
+          isSpeakingRef.current = true
           setStatus('speaking')
           setLastAction({
             type: data.action_type ?? 'generic',
@@ -56,25 +60,47 @@ export default function App() {
             timestamp: Date.now(),
           })
 
-          // Play confirmation first ("Let me look that up...")
-          if (data.confirmation_audio_b64) {
-            await playBase64(data.confirmation_audio_b64)
+          // Play single combined audio clip (confirmation + response)
+          if (data.audio_b64) {
+            await playBase64(data.audio_b64)
           }
 
-          // Then play the full response
-          if (data.response_audio_b64) {
-            await playBase64(data.response_audio_b64)
-          }
-
+          // Hold speaking lock for 8s after audio ends.
+          // Recall.ai transcribes the bot's own voice with ~5-15s latency.
+          // This prevents those garbled segments from triggering a new action.
+          await new Promise((r) => setTimeout(r, 8000))
+          isSpeakingRef.current = false
           setStatus('listening')
         }
       } catch (err) {
-        console.error('[APP] handleSegment error:', err)
+        console.error('[APP] processSegment error:', err)
       } finally {
         isProcessingRef.current = false
       }
     },
     [playBase64]
+  )
+
+  const handleSegment = useCallback(
+    (speaker: string, text: string): void => {
+      // Drop all segments while bot is speaking — it hears itself
+      if (isSpeakingRef.current) return
+
+      // Always update live transcript display immediately
+      setTranscript((prev) => [...prev.slice(-20), { speaker, text }])
+
+      // Debounce: store latest segment, send after 1.5s of silence
+      pendingRef.current = { speaker, text }
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      debounceRef.current = setTimeout(() => {
+        const seg = pendingRef.current
+        if (seg && !isSpeakingRef.current) {
+          pendingRef.current = null
+          processSegment(seg.speaker, seg.text)
+        }
+      }, 1500)
+    },
+    [processSegment]
   )
 
   const { connect, disconnect } = useTranscript({
@@ -97,7 +123,10 @@ export default function App() {
     }
 
     init()
-    return () => disconnect()
+    return () => {
+      disconnect()
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
   }, [initAudio, connect, disconnect])
 
   const statusConfig: Record<AppStatus, { color: string; label: string; pulse: boolean }> = {

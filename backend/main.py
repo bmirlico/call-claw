@@ -133,8 +133,13 @@ async def _execute_action_background(
             }),
         )
 
-        # Inject response into buffer so follow-up questions have full context
+        # Clear old buffer (removes old trigger phrases that could re-trigger)
+        # then inject only the response so follow-up questions have context
+        buffer_manager.clear(bot_id)
         buffer_manager.add_segment(bot_id, "CallClaw", response_text)
+
+        # Release cooldown immediately so bot can listen for next question
+        r.delete(f"cooldown:{bot_id}")
 
         print(f"[ACTION] Result ready: {action_id} | {response_text[:80]}")
 

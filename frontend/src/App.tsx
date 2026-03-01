@@ -99,8 +99,8 @@ export default function App() {
             await playBase64(result.audio_b64)
           }
 
-          // Hold speaking lock to absorb bot's own voice in transcript
-          await new Promise((r) => setTimeout(r, 8000))
+          // Brief pause to absorb bot's own voice echo in transcript
+          await new Promise((r) => setTimeout(r, 3000))
           isSpeakingRef.current = false
           setStatus('listening')
         }

@@ -43,6 +43,10 @@ class BufferManager:
         segments = r.lrange(key, 0, -1)
         return [json.loads(s) for s in segments]
 
+    def clear(self, bot_id: str) -> None:
+        """Flush the buffer after an action completes to prevent re-triggers."""
+        r.delete(f"buffer:{bot_id}")
+
     def _cleanup(self, bot_id: str) -> None:
         """Removes segments older than BUFFER_WINDOW_SECONDS."""
         key = f"buffer:{bot_id}"

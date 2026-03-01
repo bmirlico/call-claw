@@ -67,12 +67,13 @@ class SeedMemoryRequest(BaseModel):
 async def _execute_linear_ticket(decision: dict, instruction: str) -> str:
     """
     Extracts structured fields from Mistral's decision and calls Linear API directly.
-    Falls back to OpenClaw if fields are missing or API fails.
+    Falls back to extracting from raw_instruction if structured fields are missing.
     """
     title = decision.get("ticket_title")
     if not title:
-        print("[LINEAR] No structured fields — falling back to OpenClaw")
-        return await openclaw_service.execute("create_ticket", instruction)
+        # Mistral-small sometimes omits structured fields — extract from instruction
+        print(f"[LINEAR] No ticket_title in decision, extracting from instruction")
+        title = instruction[:120] if instruction else "Untitled ticket"
 
     description = decision.get("ticket_description", "")
     priority = decision.get("ticket_priority", 3)
@@ -287,6 +288,7 @@ async def process_transcript(request: ProcessRequest) -> dict:
     print(
         f"[ACTION] type={action_type} | trigger='{decision.get('trigger_phrase', '')}'"
         f"\n         instruction={instruction[:100]}"
+        f"\n         decision_keys={list(decision.keys())}"
     )
 
     # Generate action_id and launch background task

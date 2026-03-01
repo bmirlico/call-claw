@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from config import settings
-from services import recall_service, mistral_service, elevenlabs_service, openclaw_service, linear_service
+from services import recall_service, mistral_service, elevenlabs_service, openclaw_service, linear_service, gmail_service
 from services.buffer_manager import buffer_manager
 from services.memory_service import memory_service
 
@@ -91,6 +91,34 @@ async def _execute_linear_ticket(decision: dict, instruction: str) -> str:
     return await openclaw_service.execute("create_ticket", instruction)
 
 
+async def _execute_send_email(decision: dict, instruction: str) -> str:
+    """
+    Extracts structured fields from Mistral's decision and sends via Maton Gmail API.
+    Falls back to OpenClaw if fields are missing or API fails.
+    """
+    to = decision.get("email_to")
+    subject = decision.get("email_subject")
+    body = decision.get("email_body")
+
+    if not to or not subject:
+        print("[GMAIL] No structured fields — falling back to OpenClaw")
+        return await openclaw_service.execute("send_email", instruction)
+
+    if not body:
+        body = instruction
+
+    result = await gmail_service.send_email(to, subject, body)
+
+    if result["success"]:
+        return (
+            f"Email sent to {result['to']} with subject \"{result['subject']}\". "
+            f"Message ID: {result['message_id']}"
+        )
+
+    print(f"[GMAIL] Direct API failed: {result['error']} — falling back to OpenClaw")
+    return await openclaw_service.execute("send_email", instruction)
+
+
 async def _execute_action_background(
     action_id: str,
     bot_id: str,
@@ -111,6 +139,8 @@ async def _execute_action_background(
             result = team_memory or "I don't have memory of past calls yet."
         elif action_type == "create_ticket" and decision:
             result = await _execute_linear_ticket(decision, instruction)
+        elif action_type == "send_email" and decision:
+            result = await _execute_send_email(decision, instruction)
         else:
             result = await openclaw_service.execute(action_type, instruction)
 

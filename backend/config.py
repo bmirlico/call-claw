@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     linear_api_key: str = "TODO_fill_this"
     linear_team_id: str = "TODO_fill_this"
 
+    # Maton (Gmail API proxy — bypasses OpenClaw for reliability)
+    maton_api_key: str = "TODO_fill_this"
+
     # Redis
     redis_url: str = "redis://localhost:6379"
 

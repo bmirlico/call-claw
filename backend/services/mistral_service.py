@@ -28,6 +28,15 @@ When action_type is "create_ticket", ALSO include these fields:
 }
 ticket_priority values: 1=Urgent, 2=High, 3=Normal, 4=Low
 
+When action_type is "send_email", ALSO include these fields:
+{
+  "action_type": "send_email",
+  "email_to": "recipient@example.com",
+  "email_subject": "Meeting Summary",
+  "email_body": "Hi team, here is a summary of our discussion today..."
+}
+email_body should be a professional, well-written email body (not just a single line).
+
 Activation rules:
 - should_act = true ONLY when someone explicitly addresses "CallClaw", "Hey CallClaw", or "Claw"
 - A concrete executable action must be requested

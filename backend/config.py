@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     # ElevenLabs
     elevenlabs_api_key: str = "TODO_fill_this"
-    elevenlabs_voice_id: str = "pNInz6obpgDQGcFmaJgB"
+    elevenlabs_voice_id: str = "cgSgspJ2msm6clMCkdW9"
 
     # OpenClaw local gateway
     openclaw_gateway_token: str = "TODO_fill_this"

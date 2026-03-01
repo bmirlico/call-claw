@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    allowedHosts: ['.ngrok-free.app'],
     headers: {
       // Required for AudioContext to work in the Recall.ai headless Chromium
       'Cross-Origin-Opener-Policy': 'same-origin',

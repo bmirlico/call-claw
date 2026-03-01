@@ -103,9 +103,9 @@ export default function App() {
   const statusConfig: Record<AppStatus, { color: string; label: string; pulse: boolean }> = {
     initializing: { color: '#475569', label: 'Initializing...', pulse: false },
     connected: { color: '#2563eb', label: 'Connected', pulse: false },
-    listening: { color: '#16a34a', label: '🎧 Listening', pulse: true },
+    listening: { color: '#16a34a', label: 'Listening', pulse: true },
     reconnecting: { color: '#d97706', label: 'Reconnecting...', pulse: false },
-    speaking: { color: '#7c3aed', label: '🔊 Speaking', pulse: true },
+    speaking: { color: '#7c3aed', label: 'Speaking', pulse: true },
     error: { color: '#dc2626', label: 'Error — check console', pulse: false },
   }
 
@@ -136,7 +136,16 @@ export default function App() {
     >
       {/* Logo + title */}
       <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: '56px', lineHeight: 1 }}>🦅</div>
+        <svg width="56" height="56" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="32" cy="32" r="30" stroke="#3b82f6" strokeWidth="2" fill="#1e293b"/>
+          <path d="M20 38 L32 18 L44 38" stroke="#3b82f6" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+          <path d="M24 34 L32 22 L40 34" fill="#3b82f6" opacity="0.3"/>
+          <circle cx="28" cy="32" r="2" fill="#60a5fa"/>
+          <circle cx="36" cy="32" r="2" fill="#60a5fa"/>
+          <path d="M22 40 L18 48" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round"/>
+          <path d="M32 40 L32 48" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round"/>
+          <path d="M42 40 L46 48" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
         <h1 style={{ fontSize: '26px', fontWeight: 700, marginTop: '8px', letterSpacing: '-0.5px' }}>
           CallClaw
         </h1>

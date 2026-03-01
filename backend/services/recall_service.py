@@ -30,6 +30,9 @@ async def create_bot(meeting_url: str, team_id: str) -> dict:
             json={
                 "meeting_url": meeting_url,
                 "bot_name": "CallClaw",
+                "variant": {
+                    "google_meet": "web_4_core",
+                },
                 "output_media": {
                     "camera": {
                         "kind": "webpage",

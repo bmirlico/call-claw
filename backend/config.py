@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     openclaw_gateway_token: str = "TODO_fill_this"
     openclaw_gateway_url: str = "http://127.0.0.1:18789"
 
+    # Linear (direct API — bypasses OpenClaw for speed)
+    linear_api_key: str = "TODO_fill_this"
+    linear_team_id: str = "TODO_fill_this"
+
     # Redis
     redis_url: str = "redis://localhost:6379"
 

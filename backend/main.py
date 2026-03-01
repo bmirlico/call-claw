@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from config import settings
-from services import recall_service, mistral_service, elevenlabs_service, openclaw_service
+from services import recall_service, mistral_service, elevenlabs_service, openclaw_service, linear_service
 from services.buffer_manager import buffer_manager
 from services.memory_service import memory_service
 
@@ -64,6 +64,32 @@ class SeedMemoryRequest(BaseModel):
 
 # ── Background action execution ───────────────────────────────────────────────
 
+async def _execute_linear_ticket(decision: dict, instruction: str) -> str:
+    """
+    Extracts structured fields from Mistral's decision and calls Linear API directly.
+    Falls back to OpenClaw if fields are missing or API fails.
+    """
+    title = decision.get("ticket_title")
+    if not title:
+        print("[LINEAR] No structured fields — falling back to OpenClaw")
+        return await openclaw_service.execute("create_ticket", instruction)
+
+    description = decision.get("ticket_description", "")
+    priority = decision.get("ticket_priority", 3)
+
+    result = await linear_service.create_ticket(title, description, priority)
+
+    if result["success"]:
+        return (
+            f"Ticket {result['identifier']} created: \"{result['title']}\" "
+            f"(priority: {result['priority_label']}). "
+            f"URL: {result['url']}"
+        )
+
+    print(f"[LINEAR] Direct API failed: {result['error']} — falling back to OpenClaw")
+    return await openclaw_service.execute("create_ticket", instruction)
+
+
 async def _execute_action_background(
     action_id: str,
     bot_id: str,
@@ -71,6 +97,7 @@ async def _execute_action_background(
     instruction: str,
     team_id: str,
     team_memory: str,
+    decision: dict | None = None,
 ) -> None:
     """
     Runs in background after /process returns the instant confirmation.
@@ -81,6 +108,8 @@ async def _execute_action_background(
         # Execute action
         if action_type == "recall_memory":
             result = team_memory or "I don't have memory of past calls yet."
+        elif action_type == "create_ticket" and decision:
+            result = await _execute_linear_ticket(decision, instruction)
         else:
             result = await openclaw_service.execute(action_type, instruction)
 
@@ -266,6 +295,7 @@ async def process_transcript(request: ProcessRequest) -> dict:
             instruction=instruction,
             team_id=team_id,
             team_memory=team_memory,
+            decision=decision,
         )
     )
 

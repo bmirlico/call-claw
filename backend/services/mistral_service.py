@@ -19,6 +19,15 @@ Required format:
   "raw_instruction": "Search the web for HubSpot Sales Hub Enterprise pricing and return a concise comparison"
 }
 
+When action_type is "create_ticket", ALSO include these fields:
+{
+  "action_type": "create_ticket",
+  "ticket_title": "Safari login bug: session timeout every 10 min",
+  "ticket_description": "Users on Safari experiencing session timeouts every 10 minutes. Needs investigation by backend team.",
+  "ticket_priority": 2
+}
+ticket_priority values: 1=Urgent, 2=High, 3=Normal, 4=Low
+
 Activation rules:
 - should_act = true ONLY when someone explicitly addresses "CallClaw", "Hey CallClaw", or "Claw"
 - A concrete executable action must be requested
